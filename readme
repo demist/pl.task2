@@ -1,0 +1,3 @@
+Для запуска и установки
+В build.sh добавить путь к lua/includes и lua/library
+Далее - ./build.sh
