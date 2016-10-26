@@ -1,3 +1,6 @@
 Для запуска и установки
 В build.sh добавить путь к lua/includes и lua/library
 Далее - ./build.sh
+
+
+тестировалось на lua5.2 и python3.4
