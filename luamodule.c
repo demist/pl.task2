@@ -12,13 +12,16 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
     PyObject* tgs = PyEval_GetGlobals();
     PyObject* gs = PyEval_GetGlobals();
     PyObject* ls = NULL;
+    //парсим аргументы, как именованные, так и позиционные
     static char* kwlist[] = {"expression", "globals", "locals", NULL};
     if (!PyArg_ParseTupleAndKeywords(args, keywds, "s|OO", kwlist, &command, &gs, &ls))
         return NULL;
+    //если глобалы не переданы - берем все, доступные в питоне
     if (gs == Py_None)
         gs = PyEval_GetGlobals();
     if (ls == Py_None)
         ls = NULL;
+    //инициализируем луа
     lua_State *L;
     L = luaL_newstate();
     luaL_openlibs(L);
@@ -31,6 +34,7 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
     {
         while (PyDict_Next(gs, &gspos, &gskey, &gsvalue))
         {
+            //имя и значение переменной вытащили как строку, обрежем кавычки
             PyObject* str_key = PyObject_Repr(gskey);
             PyObject* str_value = PyObject_Repr(gsvalue);
             PyObject* pyStrKey = PyUnicode_AsEncodedString(str_key, "utf-8", "Error ~");
@@ -41,7 +45,7 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
             memcpy(realk, k + 1, len - 2);
             realk[len - 2] = '\0';
             const char* v = PyBytes_AS_STRING(pyStrValue);
-            //check if it is string constant from python
+            //проверим, что значение не было строкой в питоне, иначе получим экранирующие символы в lua
             len = strlen(v);
             if ((v[0] == '\'' && v[len - 1] == '\'') || (v[0] == '"' && v[len - 1] == '"'))
             {
@@ -52,6 +56,8 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
             }
             else
             {
+                //для lua "True" не кастуется в boolean, а вот "true" - кастуется
+                //исправим, если в питоне было именно булево True
                 if (!strcmp(v, "True") || !strcmp(v, "TRUE"))
                 {
                     lua_pushboolean(L, 1);
@@ -69,6 +75,7 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
             lua_setglobal(L, realk);
         }
     }
+    //локалы обрабатываем аналогично
     PyObject *lskey, *lsvalue;
     Py_ssize_t lspos = 0;
     if (ls != NULL && PyDict_Size(ls) != 0)
@@ -114,6 +121,7 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
         }
     }
     int error1 = luaL_loadstring(L, command);
+    //возникли ошибки - кидаем исключение
     if (error1)
     {
         PyErr_SetString(LuaError, lua_tostring(L, -1));
@@ -122,6 +130,7 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
     else
     {
         int error2 = lua_pcall(L, 0, 1, 0);
+        //возникли ошибки в луа - кидаем в питон исключение
         if (error2)
         {
             PyErr_SetString(LuaError, lua_tostring(L, -1));
@@ -143,14 +152,16 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
                     char* realk = (char*) malloc(len - 2);
                     memcpy(realk, nk + 1, len - 2);
                     realk[len - 2] = '\0';
-                    //у нас ограничены типы, а это системные глобалы других типов
                     lua_getglobal(L, realk);
+                    //проверим, что работаем именно с системными глобалами
                     if (gs == tgs)
                     {
                         PyObject* mainPy = PyImport_ImportModule("__main__");
                         PyObject* ch = PyObject_GetAttrString(mainPy, realk);
+                        //у нас ограничены типы, а это системные глобалы других типов
                         if(!PyLong_Check(ch) && !PyBool_Check(ch) && !PyFloat_Check(ch) && !PyUnicode_Check(ch))
                         {
+                            //такие типы мы обрабатывать не умеем, проходим мимо
                             lua_remove(L, -1);
                             continue;
                         }
@@ -234,6 +245,8 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
                     }
                 }
             }
+            //переменные обработали, на стеке луа осталось только возвращаемое значение
+            //проверим его тип и прокинем в питон
             if (lua_isnumber(L, -1))
             {
                 double ret = lua_tonumber(L, -1);
@@ -254,6 +267,7 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
             }
         }
     }
+    //заканчиваем работу с луа
     lua_close(L);
     Py_INCREF(Py_None);
     return Py_None;
