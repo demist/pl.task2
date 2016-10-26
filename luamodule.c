@@ -9,7 +9,7 @@ static PyObject*
 lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
 {
     const char* command;
-    //PyObject* tgs = PyEval_GetGlobals();
+    PyObject* tgs = PyEval_GetGlobals();
     PyObject* gs = PyEval_GetGlobals();
     PyObject* ls = NULL;
     static char* kwlist[] = {"expression", "globals", "locals", NULL};
@@ -43,7 +43,7 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
             const char* v = PyBytes_AS_STRING(pyStrValue);
             //check if it is string constant from python
             len = strlen(v);
-            if (v[0] == '\'' && v[len - 1] == '\'')
+            if ((v[0] == '\'' && v[len - 1] == '\'') || (v[0] == '"' && v[len - 1] == '"'))
             {
                 char* realv = (char*) malloc(len - 2);
                 memcpy(realv, v + 1, len - 2);
@@ -51,7 +51,21 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
                 lua_pushstring(L, realv);
             }
             else
-                lua_pushstring(L, v);
+            {
+                if (!strcmp(v, "True") || !strcmp(v, "TRUE"))
+                {
+                    lua_pushboolean(L, 1);
+                }
+                else
+                {
+                    if (!strcmp(v, "False") || !strcmp(v, "False"))
+                    {
+                        lua_pushboolean(L, 0);
+                    }
+                    else
+                        lua_pushstring(L, v);
+                }
+            }
             lua_setglobal(L, realk);
         }
     }
@@ -82,13 +96,13 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
             }
             else
             {
-                if (strcmp(v, "True") || strcmp(v, "TRUE"))
+                if (!strcmp(v, "True") || !strcmp(v, "TRUE"))
                 {
                     lua_pushboolean(L, 1);
                 }
                 else
                 {
-                    if (strcmp(v, "False") || strcmp(v, "False"))
+                    if (!strcmp(v, "False") || !strcmp(v, "False"))
                     {
                         lua_pushboolean(L, 0);
                     }
@@ -130,14 +144,17 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
                     memcpy(realk, nk + 1, len - 2);
                     realk[len - 2] = '\0';
                     //у нас ограничены типы, а это системные глобалы других типов
-                    PyObject* mainPy = PyImport_ImportModule("__main__");
-                    PyObject* ch = PyObject_GetAttrString(mainPy, realk);
-                    if(!PyLong_Check(ch) && !PyBool_Check(ch) && !PyFloat_Check(ch) && !PyUnicode_Check(ch))
-                    {
-                        lua_remove(L, -1);
-                        continue;
-                    }
                     lua_getglobal(L, realk);
+                    if (gs == tgs)
+                    {
+                        PyObject* mainPy = PyImport_ImportModule("__main__");
+                        PyObject* ch = PyObject_GetAttrString(mainPy, realk);
+                        if(!PyLong_Check(ch) && !PyBool_Check(ch) && !PyFloat_Check(ch) && !PyUnicode_Check(ch))
+                        {
+                            lua_remove(L, -1);
+                            continue;
+                        }
+                    }
                     if (lua_isnone(L, - 1))
                     {
                         PyDict_SetItem(gs, ngskey, Py_None);
@@ -155,12 +172,12 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
                         continue;
                      }
                      if (lua_isboolean(L, -1))
-                        {
+                     {
                             int ret = lua_toboolean(L, -1);
                             PyDict_SetItem(gs, ngskey, Py_BuildValue("i", ret));
                             lua_remove(L, -1);
                             continue;
-                        }
+                     }
                      if(lua_isstring(L, -1))
                      {
                         const char* ret = lua_tostring(L, -1);
@@ -169,51 +186,51 @@ lua_eval(PyObject* self, PyObject* args, PyObject* keywds)
                         continue;
                      }
                 }
-                //получаем новые значения locals
-                PyObject *nlskey, *nlsvalue;
-                Py_ssize_t nlspos = 0;
-                if (ls != NULL && PyDict_Size(ls) != 0)
+            }
+            //получаем новые значения locals
+            PyObject *nlskey, *nlsvalue;
+            Py_ssize_t nlspos = 0;
+            if (ls != NULL && PyDict_Size(ls) != 0)
+            {
+                while (PyDict_Next(ls, &nlspos, &nlskey, &nlsvalue))
                 {
-                    while (PyDict_Next(ls, &nlspos, &nlskey, &nlsvalue))
+                    PyObject* nstr_key = PyObject_Repr(nlskey);
+                    PyObject* npyStrKey = PyUnicode_AsEncodedString(nstr_key, "utf-8", "Error ~");
+                    const char* nk = PyBytes_AS_STRING(npyStrKey);
+                    int len = strlen(nk);
+                    char* realk = (char*) malloc(len - 2);
+                    memcpy(realk, nk + 1, len - 2);
+                    realk[len - 2] = '\0';
+                    lua_getglobal(L, realk);
+                    if (lua_isnone(L, - 1))
                     {
-                        PyObject* nstr_key = PyObject_Repr(nlskey);
-                        PyObject* npyStrKey = PyUnicode_AsEncodedString(nstr_key, "utf-8", "Error ~");
-                        const char* nk = PyBytes_AS_STRING(npyStrKey);
-                        int len = strlen(nk);
-                        char* realk = (char*) malloc(len - 2);
-                        memcpy(realk, nk + 1, len - 2);
-                        realk[len - 2] = '\0';
-                        lua_getglobal(L, realk);
-                        if (lua_isnone(L, - 1))
-                        {
-                            PyDict_SetItem(ls, nlskey, Py_None);
-                            lua_remove(L, -1);
-                            continue;
-                        }
-                        if (lua_isnumber(L, -1))
-                        {
-                            double ret = lua_tonumber(L, -1);
-                            if (ret == (int) ret)
-                                PyDict_SetItem(ls, nlskey, Py_BuildValue("i", (int) ret));
-                            else
-                                PyDict_SetItem(ls, nlskey, Py_BuildValue("d", ret));
-                            lua_remove(L, -1);
-                            continue;
-                        }
-                        if (lua_isboolean(L, -1))
-                            {
-                                int ret = lua_toboolean(L, -1);
-                                PyDict_SetItem(ls, nlskey, Py_BuildValue("i", ret));
-                                lua_remove(L, -1);
-                                continue;
-                            }
-                        if(lua_isstring(L, -1))
-                        {
-                            const char* ret = lua_tostring(L, -1);
-                            PyDict_SetItem(ls, nlskey, Py_BuildValue("s", ret));
-                            lua_remove(L, -1);
-                            continue;
-                        }
+                        PyDict_SetItem(ls, nlskey, Py_None);
+                        lua_remove(L, -1);
+                        continue;
+                    }
+                    if (lua_isnumber(L, -1))
+                    {
+                        double ret = lua_tonumber(L, -1);
+                        if (ret == (int) ret)
+                            PyDict_SetItem(ls, nlskey, Py_BuildValue("i", (int) ret));
+                        else
+                            PyDict_SetItem(ls, nlskey, Py_BuildValue("d", ret));
+                        lua_remove(L, -1);
+                        continue;
+                    }
+                    if (lua_isboolean(L, -1))
+                    {
+                        int ret = lua_toboolean(L, -1);
+                        PyDict_SetItem(ls, nlskey, Py_BuildValue("i", ret));
+                        lua_remove(L, -1);
+                        continue;
+                    }
+                    if(lua_isstring(L, -1))
+                    {
+                        const char* ret = lua_tostring(L, -1);
+                        PyDict_SetItem(ls, nlskey, Py_BuildValue("s", ret));
+                        lua_remove(L, -1);
+                        continue;
                     }
                 }
             }
